@@ -7,17 +7,27 @@
 # sta accanto a quello che aggiorna i battuti, e premerlo per sbaglio a meta'
 # serata spegnerebbe il catalogo davanti a tutti.
 #
-# Fa tre cose, in quest'ordine:
+# Fa due cose:
 #   1. disattiva il workflow che rilegge Airtable ogni 5 minuti;
-#   2. smonta il sito GitHub Pages, cosi' l'indirizzo non risponde piu';
-#   3. toglie `index.html` e `battuti.json` dal repository — perche' il repo
-#      e' pubblico, e senza questo passo la pagina resterebbe leggibile su
-#      github.com anche a sito spento.
+#   2. toglie `index.html` e `battuti.json` dal repository.
+#
+# **E' il secondo passo a spegnere il sito**, non un comando su GitHub Pages.
+# Senza `index.html` l'indirizzo risponde 404, e il file sparisce anche da
+# github.com — cosa necessaria, perche' il repo e' pubblico e a solo sito
+# spento la pagina resterebbe comunque leggibile li' dentro, foto comprese.
+#
+# Pages resta configurato ma vuoto. Smontarlo davvero non e' possibile da qui:
+# il token automatico di Actions non ha quel permesso e l'API risponde 403.
+# La prima versione di questo workflow ci provava e, fallendo, stampava
+# «risultava gia' spento»: sembrava tutto a posto mentre non lo era. Meglio
+# non provarci e dire come stanno le cose. E' comunque ininfluente — un Pages
+# senza pagine non serve a nessuno — e in cambio la riapertura e' immediata.
 #
 # **Si torna indietro con un comando solo.** Dal PC, `python pubblica.py`
-# rimette la pagina, riaccende Pages e ripubblica: ci mette una decina di
-# secondi. Il workflow dei battuti va invece riattivato a mano, da Actions ->
-# «Aggiorna i titoli battuti» -> menu «...» -> Enable workflow.
+# rimette la pagina e ripubblica: una decina di secondi. Il workflow dei
+# battuti va invece riattivato a mano, da Actions -> «Aggiorna i titoli
+# battuti» -> menu «...» -> Enable workflow. GitHub non consente di
+# riaccenderlo dall'esterno, ed e' un bene: non puo' ripartire da solo.
 
 name: Chiudi l'asta
 
@@ -31,7 +41,6 @@ on:
 
 permissions:
   actions: write     # per disattivare il workflow periodico
-  pages: write       # per smontare il sito
   contents: write    # per togliere la pagina dal repository
 
 jobs:
@@ -54,24 +63,14 @@ jobs:
             "repos/${{ github.repository }}/actions/workflows/aggiorna-battuti.yml/disable"
           echo "Aggiornamento ogni 5 minuti: disattivato."
 
-      - name: Smonta il sito
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if gh api -X DELETE "repos/${{ github.repository }}/pages" 2>/dev/null; then
-            echo "GitHub Pages: smontato."
-          else
-            echo "GitHub Pages risultava gia' spento."
-          fi
-
-      - name: Togli la pagina dal repository
+      - name: Ritira la pagina
         run: |
           rimossi=""
           for f in index.html battuti.json; do
             if [ -f "$f" ]; then git rm -q "$f"; rimossi="$rimossi $f"; fi
           done
           if [ -z "$rimossi" ]; then
-            echo "Non c'era niente da rimuovere."
+            echo "La pagina era gia' stata ritirata: niente da fare."
             exit 0
           fi
           git config user.name  "github-actions[bot]"
@@ -79,6 +78,7 @@ jobs:
           git commit -qm "Asta conclusa: pagina ritirata$rimossi"
           git push
           echo "Rimossi dal repository:$rimossi"
+          echo "Il sito rispondera' 404 entro una ventina di secondi."
 
       - name: Riepilogo
         run: |
@@ -86,8 +86,8 @@ jobs:
             echo "## Asta chiusa"
             echo ""
             echo "- aggiornamento automatico **fermo**"
-            echo "- sito **non piu' raggiungibile**"
-            echo "- pagina **tolta** dal repository pubblico"
+            echo "- pagina **ritirata**: il sito risponde 404 e il file non e'"
+            echo "  piu' leggibile nemmeno su github.com"
             echo ""
             echo "Per riaprire: \`python pubblica.py\` dal PC, poi riattiva"
             echo "«Aggiorna i titoli battuti» da Actions."
