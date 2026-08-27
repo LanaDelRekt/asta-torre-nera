@@ -1,0 +1,94 @@
+# Chiude l'asta: ferma l'aggiornamento automatico e toglie la pagina dal web.
+#
+# Da lanciare a mano quando il banditore ha finito — anche dal telefono:
+# app GitHub -> Actions -> «Chiudi l'asta» -> Run workflow.
+#
+# Chiede di scrivere CHIUDI per confermare. Non e' burocrazia: questo tasto
+# sta accanto a quello che aggiorna i battuti, e premerlo per sbaglio a meta'
+# serata spegnerebbe il catalogo davanti a tutti.
+#
+# Fa tre cose, in quest'ordine:
+#   1. disattiva il workflow che rilegge Airtable ogni 5 minuti;
+#   2. smonta il sito GitHub Pages, cosi' l'indirizzo non risponde piu';
+#   3. toglie `index.html` e `battuti.json` dal repository — perche' il repo
+#      e' pubblico, e senza questo passo la pagina resterebbe leggibile su
+#      github.com anche a sito spento.
+#
+# **Si torna indietro con un comando solo.** Dal PC, `python pubblica.py`
+# rimette la pagina, riaccende Pages e ripubblica: ci mette una decina di
+# secondi. Il workflow dei battuti va invece riattivato a mano, da Actions ->
+# «Aggiorna i titoli battuti» -> menu «...» -> Enable workflow.
+
+name: Chiudi l'asta
+
+on:
+  workflow_dispatch:
+    inputs:
+      conferma:
+        description: "Scrivi CHIUDI per confermare"
+        required: true
+        default: ""
+
+permissions:
+  actions: write     # per disattivare il workflow periodico
+  pages: write       # per smontare il sito
+  contents: write    # per togliere la pagina dal repository
+
+jobs:
+  chiudi:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verifica la conferma
+        if: inputs.conferma != 'CHIUDI'
+        run: |
+          echo "::error::Confermare scrivendo CHIUDI. Non e' stato toccato niente."
+          exit 1
+
+      - uses: actions/checkout@v4
+
+      - name: Ferma l'aggiornamento automatico
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X PUT \
+            "repos/${{ github.repository }}/actions/workflows/aggiorna-battuti.yml/disable"
+          echo "Aggiornamento ogni 5 minuti: disattivato."
+
+      - name: Smonta il sito
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh api -X DELETE "repos/${{ github.repository }}/pages" 2>/dev/null; then
+            echo "GitHub Pages: smontato."
+          else
+            echo "GitHub Pages risultava gia' spento."
+          fi
+
+      - name: Togli la pagina dal repository
+        run: |
+          rimossi=""
+          for f in index.html battuti.json; do
+            if [ -f "$f" ]; then git rm -q "$f"; rimossi="$rimossi $f"; fi
+          done
+          if [ -z "$rimossi" ]; then
+            echo "Non c'era niente da rimuovere."
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -qm "Asta conclusa: pagina ritirata$rimossi"
+          git push
+          echo "Rimossi dal repository:$rimossi"
+
+      - name: Riepilogo
+        run: |
+          {
+            echo "## Asta chiusa"
+            echo ""
+            echo "- aggiornamento automatico **fermo**"
+            echo "- sito **non piu' raggiungibile**"
+            echo "- pagina **tolta** dal repository pubblico"
+            echo ""
+            echo "Per riaprire: \`python pubblica.py\` dal PC, poi riattiva"
+            echo "«Aggiorna i titoli battuti» da Actions."
+          } >> "$GITHUB_STEP_SUMMARY"
