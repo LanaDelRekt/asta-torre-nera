@@ -1,0 +1,92 @@
+# Mette in pausa, o fa ripartire, l'aggiornamento automatico dei battuti.
+#
+# Dal telefono: app GitHub -> Actions -> «Pausa aggiornamento» -> Run workflow
+# -> scegli «pausa» o «riprendi».
+#
+# **Non e' «Chiudi l'asta».** Quello ritira anche la pagina e spegne il sito.
+# Questo tocca solo il cron: il catalogo resta online e consultabile, si ferma
+# soltanto la rilettura di Airtable ogni 5 minuti. Serve quando l'asta e' in
+# pausa, o prima che cominci, o se ti accorgi di aver messo su Airtable un
+# valore sbagliato e vuoi correggerlo con calma senza che vada in pagina.
+#
+# La scelta e' esplicita e non un interruttore che inverte lo stato: sul
+# telefono non vedi se e' acceso o spento prima di premere, e un toggle
+# «al buio» fa ripartire il cron proprio quando volevi fermarlo.
+#
+# Nota: mentre e' in pausa la pagina continua a rileggere `battuti.json` ogni
+# minuto, ma quel file non cambia piu' — quindi resta ferma sull'ultimo stato
+# pubblicato. L'orario nel piede continua ad avanzare, perche' segna la
+# rilettura e non il contenuto.
+
+name: Pausa aggiornamento
+
+on:
+  workflow_dispatch:
+    inputs:
+      azione:
+        description: "Che cosa fare"
+        required: true
+        type: choice
+        default: pausa
+        options:
+          - pausa
+          - riprendi
+
+permissions:
+  actions: write
+
+jobs:
+  interruttore:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      FLUSSO: aggiorna-battuti.yml
+    steps:
+      - name: Stato attuale
+        id: prima
+        run: |
+          stato=$(gh api "repos/${{ github.repository }}/actions/workflows/$FLUSSO" --jq .state)
+          echo "stato=$stato" >> "$GITHUB_OUTPUT"
+          echo "Prima: $stato"
+
+      - name: Metti in pausa
+        if: inputs.azione == 'pausa'
+        run: |
+          if [ "${{ steps.prima.outputs.stato }}" != "active" ]; then
+            echo "Era gia' in pausa: non ho toccato niente."
+            exit 0
+          fi
+          gh api -X PUT "repos/${{ github.repository }}/actions/workflows/$FLUSSO/disable"
+          echo "Aggiornamento automatico: IN PAUSA."
+
+      - name: Fai ripartire
+        if: inputs.azione == 'riprendi'
+        run: |
+          if [ "${{ steps.prima.outputs.stato }}" = "active" ]; then
+            echo "Era gia' attivo: non ho toccato niente."
+            exit 0
+          fi
+          gh api -X PUT "repos/${{ github.repository }}/actions/workflows/$FLUSSO/enable"
+          echo "Aggiornamento automatico: RIPARTITO."
+
+      - name: Riepilogo
+        run: |
+          dopo=$(gh api "repos/${{ github.repository }}/actions/workflows/$FLUSSO" --jq .state)
+          if [ "$dopo" = "active" ]; then
+            titolo="Aggiornamento ATTIVO"
+            nota="Il catalogo rilegge Airtable ogni 5 minuti."
+          else
+            titolo="Aggiornamento IN PAUSA"
+            nota="Il sito resta online, ma i battuti non si aggiornano piu'."
+          fi
+          {
+            echo "## $titolo"
+            echo ""
+            echo "$nota"
+            echo ""
+            echo "Prima era \`${{ steps.prima.outputs.stato }}\`, ora e' \`$dopo\`."
+            echo ""
+            echo "Per forzare un aggiornamento adesso: Actions -> «Aggiorna i"
+            echo "titoli battuti» -> Run workflow."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "$titolo"
