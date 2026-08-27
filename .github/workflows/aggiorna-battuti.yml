@@ -1,0 +1,64 @@
+# Riscrive `battuti.json` leggendo il campo «Valore Battuto» da Airtable.
+#
+# La pagina (`index.html`) pesa 5 MB di foto e non viene toccata qui: durante
+# l'asta cambia solo chi e' stato aggiudicato e a quanto, che sono pochi byte.
+# `index.html` rilegge questo file da sola ogni minuto, quindi chi ha il
+# catalogo aperto vede i battuti comparire senza ricaricare nulla.
+#
+# Il token Airtable sta nel secret AIRTABLE_TOKEN del repository: non compare
+# nella pagina, non finisce nei log e non e' leggibile dai visitatori.
+#
+# A fine asta conviene fermarlo: Actions -> «Aggiorna i titoli battuti» ->
+# menu «...» -> Disable workflow. GitHub sospende comunque da solo gli
+# scheduled workflow nei repo fermi da 60 giorni.
+
+name: Aggiorna i titoli battuti
+
+on:
+  schedule:
+    # ogni 5 minuti: e' il minimo concesso da GitHub, e in pratica puo'
+    # ritardare di qualche minuto quando lo scheduler e' carico — per questo
+    # esiste anche l'avvio manuale qui sotto
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+# una sola esecuzione per volta: due push concorrenti sullo stesso file
+# finirebbero per rifiutarsi a vicenda
+concurrency:
+  group: battuti
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  aggiorna:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installa le dipendenze
+        run: pip install --quiet requests
+
+      - name: Rileggi Airtable
+        env:
+          AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_TOKEN }}
+        run: python esporta_battuti.py battuti.json
+
+      - name: Pubblica se qualcosa e' cambiato
+        run: |
+          if git diff --quiet -- battuti.json; then
+            echo "Nessuna aggiudicazione nuova: niente da pubblicare."
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add battuti.json
+          git commit -m "Titoli battuti aggiornati $(date -u '+%d/%m/%Y %H:%M UTC')"
+          git push
+          echo "Pubblicato:"
+          cat battuti.json
